@@ -327,7 +327,7 @@ begin
   total := greatest(subtotal - disc, 0) + ship;
   initials := upper(coalesce(substring(regexp_replace(m.store_name, '[^a-zA-Z]', '', 'g') from 1 for 2), 'BL'));
   if char_length(initials) < 2 then initials := 'BL'; end if;
-  code := initials || '-' || upper(substr(encode(gen_random_bytes(8), 'hex'), 1, 5));
+  code := initials || '-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8));
   pay_status := case when p_payment in ('wallet','instapay')
     and (coalesce(p_ref,'') <> '' or coalesce(p_receipt,'') <> '') then 'pending_review' else 'unpaid' end;
 
