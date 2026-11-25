@@ -1,4 +1,4 @@
-import { isDatabaseConfigured, databaseUnavailableResponse } from "@/db";
+import { isDatabaseConfigured, databaseUnavailableResponse, databaseServiceErrorResponse } from "@/db";
 import { NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { rls, logAudit } from "@/db/rls";
@@ -13,7 +13,7 @@ const s = (v: unknown, max = 200) => (typeof v === "string" ? v.trim().slice(0, 
 const n = (v: unknown, def = 0) => (Number.isFinite(Number(v)) ? Number(v) : def);
 const arr = (v: unknown) => (Array.isArray(v) ? v.map((x) => s(x, 40)).filter(Boolean).slice(0, 12) : []);
 
-export async function POST(req: Request) {
+async function handlePost(req: Request) {
   if (!isDatabaseConfigured()) return databaseUnavailableResponse();
   const user = await getSessionUser();
   if (!user?.merchant) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -52,16 +52,17 @@ export async function POST(req: Request) {
             const res = await tx.execute(sql`
               insert into products(merchant_id, name, description, price, compare_at, stock, image, category, collection, colors, sizes, badge, status)
               values (${uid}, ${payload.name}, ${payload.description}, ${payload.price}, ${payload.compareAt}, ${payload.stock},
-                ${payload.image}, ${payload.category}, ${payload.collection}, ${payload.colors}, ${payload.sizes}, ${payload.badge}, ${payload.status})
+                ${payload.image}, ${payload.category}, ${payload.collection}, ${sql.param(payload.colors)}::text[], ${sql.param(payload.sizes)}::text[], ${payload.badge}, ${payload.status})
               returning id`);
             return NextResponse.json({ ok: true, id: (res.rows[0] as { id: string }).id });
           }
-          await tx.execute(sql`
+          const updated = await tx.execute(sql`
             update products set name = ${payload.name}, description = ${payload.description}, price = ${payload.price},
               compare_at = ${payload.compareAt}, stock = ${payload.stock}, image = ${payload.image}, category = ${payload.category},
-              collection = ${payload.collection}, colors = ${payload.colors}, sizes = ${payload.sizes}, badge = ${payload.badge},
+              collection = ${payload.collection}, colors = ${sql.param(payload.colors)}::text[], sizes = ${sql.param(payload.sizes)}::text[], badge = ${payload.badge},
               status = ${payload.status}
-            where id = ${id} and merchant_id = ${uid}`);
+            where id = ${id} and merchant_id = ${uid} returning id`);
+          if (!updated.rows.length) return NextResponse.json({ ok: false, error: "Product not found." }, { status: 404 });
           return NextResponse.json({ ok: true, id });
         });
       }
@@ -92,7 +93,7 @@ export async function POST(req: Request) {
               payment_status = coalesce(${nextPay}, payment_status),
               paid_at = case when ${nextPay} = 'paid' then now() else paid_at end,
               history = history || jsonb_build_object('at', now(), 'label',
-                coalesce(${nextStatus}, case when ${nextPay} is not null then 'Payment ' || ${nextPay} else 'Updated' end))
+                coalesce(${nextStatus}, case when ${nextPay}::text is not null then 'Payment ' || ${nextPay} else 'Updated' end))
             where id = ${id} and merchant_id = ${uid}`);
         });
         return NextResponse.json({ ok: true });
@@ -104,10 +105,11 @@ export async function POST(req: Request) {
         const code = s(d.code, 24).toUpperCase().replace(/[^A-Z0-9-]/g, "");
         if (code.length < 3) return bad("Code must be 3-24 characters (A-Z, 0-9, -).");
         const type = ["percent", "fixed", "freeShipping"].includes(s(d.type)) ? s(d.type) : "percent";
+        const value = type === "percent" ? Math.min(100, Math.max(0, n(d.value))) : Math.max(0, n(d.value));
         await rls(uid, async (tx) => {
           if (id) {
             await tx.execute(sql`
-              update discounts set code = ${code}, type = ${type}, value = ${Math.max(0, n(d.value))},
+              update discounts set code = ${code}, type = ${type}, value = ${value},
                 max_uses = ${d.maxUses ? Math.round(n(d.maxUses)) : null}, active = ${Boolean(d.active)},
                 min_order = ${Math.max(0, n(d.minOrder))}, max_discount = ${d.maxDiscount ? Math.max(0, n(d.maxDiscount)) : null},
                 expires_at = ${s(d.expiresAt, 40) || null}, once_per_customer = ${Boolean(d.oncePerCustomer)},
@@ -116,7 +118,7 @@ export async function POST(req: Request) {
           } else {
             await tx.execute(sql`
               insert into discounts(merchant_id, code, type, value, max_uses, active, min_order, max_discount, expires_at, once_per_customer, description)
-              values (${uid}, ${code}, ${type}, ${Math.max(0, n(d.value))}, ${d.maxUses ? Math.round(n(d.maxUses)) : null},
+              values (${uid}, ${code}, ${type}, ${value}, ${d.maxUses ? Math.round(n(d.maxUses)) : null},
                 ${d.active !== false}, ${Math.max(0, n(d.minOrder))}, ${d.maxDiscount ? Math.max(0, n(d.maxDiscount)) : null},
                 ${s(d.expiresAt, 40) || null}, ${Boolean(d.oncePerCustomer)}, ${s(d.description, 200)})
               on conflict (merchant_id, code) do nothing`);
@@ -134,6 +136,7 @@ export async function POST(req: Request) {
 
       case "campaign.save": {
         if (!limits.campaigns) return bad("Campaigns require the Pro plan.");
+        if (s(d.status) === "sent") return bad("Campaign delivery is not connected yet. Save as a draft instead.");
         await rls(uid, async (tx) => {
           await tx.execute(sql`
             insert into campaigns(merchant_id, name, channel, audience, status, sent_at, open_rate)
@@ -152,22 +155,35 @@ export async function POST(req: Request) {
       }
 
       case "settings.save": {
-        const settings = (d.settings ?? {}) as Record<string, unknown>;
+        const input = (d.settings ?? {}) as Record<string, unknown>;
         const storeName = s(d.storeName, 40);
-        const payments = d.payments ? JSON.stringify(d.payments) : null;
+        if (storeName.length < 2) return bad("Store name must be at least 2 characters.");
+        const currency = ["EGP", "SAR", "AED", "USD", "EUR", "KWD"].includes(s(input.currency)) ? s(input.currency) : "EGP";
+        const shippingFee = Math.max(0, n(input.shippingFee));
+        const freeShippingThreshold = Math.max(0, n(input.freeShippingThreshold));
+        const codFee = Math.max(0, n(input.codFee));
         await rls(uid, async (tx) => {
-          await tx.execute(sql`update stores set settings = ${JSON.stringify(settings)}::jsonb where merchant_id = ${uid}`);
-          if (payments) {
-            await tx.execute(sql`
-              update stores set
-                site = jsonb_set(site, '{checkout,payments}', coalesce(site->'checkout'->'payments', '{}'::jsonb) || ${payments}::jsonb, true),
-                site_published = case when site_published is null then null
-                  else jsonb_set(site_published, '{checkout,payments}', coalesce(site_published->'checkout'->'payments', '{}'::jsonb) || ${payments}::jsonb, true) end
-              where merchant_id = ${uid} and site ? 'checkout'`);
+          const result = await tx.execute(sql`select site, settings, site_published from stores where merchant_id = ${uid} for update`);
+          const row = result.rows[0] as { site: SiteDoc; settings: Record<string, unknown>; site_published: unknown };
+          const site = row.site?.blocks ? row.site : defaultSite(storeName);
+          site.brand.name = storeName;
+          site.brand.currency = currency;
+          site.brand.shippingFee = shippingFee;
+          site.brand.freeShippingThreshold = freeShippingThreshold;
+          if (d.payments && typeof d.payments === "object") {
+            site.checkout.payments = { ...site.checkout.payments, ...d.payments as SiteDoc["checkout"]["payments"] };
           }
-          if (storeName.length >= 2) {
-            await tx.execute(sql`update merchants set store_name = ${storeName} where id = ${uid}`);
-          }
+          site.checkout.payments.cod.fee = codFee;
+          const clean = sanitizeSite(site, plan);
+          const settings = { ...row.settings, currency, shippingFee, freeShippingThreshold, codFee,
+            paymentsPublic: { cod: clean.checkout.payments.cod.enabled,
+              wallet: clean.checkout.payments.wallet.enabled && Boolean(clean.checkout.payments.wallet.number),
+              instapay: clean.checkout.payments.instapay.enabled && Boolean(clean.checkout.payments.instapay.number) } };
+          await tx.execute(sql`update stores set settings = ${JSON.stringify(settings)}::jsonb,
+            site = ${JSON.stringify(clean)}::jsonb,
+            site_published = case when site_published is null then null else ${JSON.stringify(clean)}::jsonb end
+            where merchant_id = ${uid}`);
+          await tx.execute(sql`update merchants set store_name = ${storeName} where id = ${uid}`);
         });
         return NextResponse.json({ ok: true });
       }
@@ -287,11 +303,16 @@ export async function POST(req: Request) {
         return NextResponse.json({ ok: false, error: "Unknown action" }, { status: 400 });
     }
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Request failed";
-    return NextResponse.json({ ok: false, error: message.slice(0, 200) }, { status: 400 });
+    const raw = err instanceof Error ? err.message : "";
+    const error = raw.includes("23505") || raw.includes("unique") ? "That value is already in use." : "Could not save your changes. Check the details and try again.";
+    return NextResponse.json({ ok: false, error }, { status: 400 });
   }
 }
 
 function bad(error: string) {
   return NextResponse.json({ ok: false, error }, { status: 400 });
+}
+
+export async function POST(req: Request) {
+  try { return await handlePost(req); } catch { return databaseServiceErrorResponse(); }
 }

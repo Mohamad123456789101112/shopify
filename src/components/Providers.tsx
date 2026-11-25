@@ -19,6 +19,7 @@ export function Providers({ children }: { children: ReactNode }) {
   const [dark, setDark] = useState(false);
 
   useEffect(() => {
+    const frame = requestAnimationFrame(() => {
     try {
       const stored = localStorage.getItem("bly_lang") as Lang | null;
       const device = (navigator.language || "en").toLowerCase().startsWith("ar") ? "ar" : "en";
@@ -30,6 +31,8 @@ export function Providers({ children }: { children: ReactNode }) {
     } catch {
       /* ignore */
     }
+    });
+    return () => cancelAnimationFrame(frame);
   }, []);
 
   const setLang = useCallback((l: Lang) => {

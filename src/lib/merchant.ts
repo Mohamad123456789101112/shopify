@@ -34,22 +34,22 @@ export function siteOf(store: StoreRow, storeName: string): SiteDoc {
   return defaultSite(storeName);
 }
 
-export async function dashboardData(userId: string) {
+export async function dashboardData(userId: string, days: 7 | 30 | 90 = 30) {
   return rls(userId, async (tx) => {
     const [kpis, chart, top, low, recent, notif, products] = await Promise.all([
       tx.execute(sql`
         select
-          coalesce(sum(total) filter (where created_at > now() - interval '30 days' and status <> 'Cancelled'), 0) as revenue30,
-          coalesce(sum(total) filter (where created_at between now() - interval '60 days' and now() - interval '30 days' and status <> 'Cancelled'), 0) as revenue_prev,
-          count(*) filter (where created_at > now() - interval '30 days') as orders30,
-          count(*) filter (where created_at between now() - interval '60 days' and now() - interval '30 days') as orders_prev,
+          coalesce(sum(total) filter (where created_at > now() - make_interval(days => ${days}::int) and status not in ('Cancelled', 'Refunded')), 0) as revenue30,
+          coalesce(sum(total) filter (where created_at between now() - make_interval(days => ${days * 2}::int) and now() - make_interval(days => ${days}::int) and status not in ('Cancelled', 'Refunded')), 0) as revenue_prev,
+          count(*) filter (where created_at > now() - make_interval(days => ${days}::int)) as orders30,
+          count(*) filter (where created_at between now() - make_interval(days => ${days * 2}::int) and now() - make_interval(days => ${days}::int)) as orders_prev,
           count(*) as orders_total,
           count(distinct customer->>'phone') as customers
         from orders where merchant_id = ${userId}`),
       tx.execute(sql`
         select to_char(d.day, 'Mon DD') as label, coalesce(sum(o.total), 0)::float as value
-        from generate_series(current_date - interval '13 days', current_date, interval '1 day') d(day)
-        left join orders o on o.merchant_id = ${userId} and date_trunc('day', o.created_at) = d.day
+        from generate_series(current_date - make_interval(days => ${Math.min(days, 30) - 1}::int), current_date, interval '1 day') d(day)
+        left join orders o on o.merchant_id = ${userId} and o.status not in ('Cancelled', 'Refunded') and date_trunc('day', o.created_at) = d.day
         group by d.day order by d.day`),
       tx.execute(sql`select name, sold, price, image from products where merchant_id = ${userId} order by sold desc limit 5`),
       tx.execute(sql`select id, name, stock from products where merchant_id = ${userId} and stock <= 3 order by stock asc limit 5`),

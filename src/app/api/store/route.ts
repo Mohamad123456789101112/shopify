@@ -1,7 +1,7 @@
-import { isDatabaseConfigured, databaseUnavailableResponse } from "@/db";
+import { isDatabaseConfigured, databaseUnavailableResponse, databaseServiceErrorResponse } from "@/db";
 import { NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
-import { rls } from "@/db/rls";
+import { rls, rateLimit } from "@/db/rls";
 import { clientIp } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 const s = (v: unknown, max = 200) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 
 /** Storefront gateway — anonymous. Every privileged step happens inside a SECURITY DEFINER RPC. */
-export async function POST(req: Request) {
+async function handlePost(req: Request) {
   if (!isDatabaseConfigured()) return databaseUnavailableResponse();
   const body = (await req.json().catch(() => ({}))) as { action?: string; data?: Record<string, unknown> };
   const d = body.data ?? {};
@@ -17,6 +17,7 @@ export async function POST(req: Request) {
   const slug = s(d.slug, 40);
 
   try {
+    if (!(await rateLimit(`store-api:${ip}:${slug}`, 30, 600, 600))) return NextResponse.json({ ok: false, error: "Too many requests. Please try again later." }, { status: 429 });
     if (body.action === "order.place") {
       const items = Array.isArray(d.items)
         ? (d.items as Record<string, unknown>[]).slice(0, 30).map((i) => ({ productId: s(i.productId, 40), qty: Number(i.qty) || 1 }))
@@ -40,23 +41,9 @@ export async function POST(req: Request) {
       const subtotal = Number(d.subtotal) || 0;
       const code = s(d.code, 24).toUpperCase();
       const res = await rls(null, async (tx) =>
-        tx.execute(sql`
-          select d.type, d.value, d.max_discount from discounts d
-          join merchants m on m.id = d.merchant_id
-          where m.store_slug = ${slug} and d.code = ${code} and d.active
-            and (d.starts_at is null or d.starts_at <= now()) and (d.expires_at is null or d.expires_at > now())
-            and (d.max_uses is null or d.uses < d.max_uses) and d.min_order <= ${subtotal} limit 1`),
+        tx.execute(sql`select check_discount(${slug}, ${code}, ${subtotal}) as r`),
       );
-      const row = res.rows[0] as { type: string; value: string; max_discount: string | null } | undefined;
-      if (!row) return NextResponse.json({ ok: false, error: "Code not valid for this order." });
-      let amount = 0;
-      if (row.type === "percent") {
-        amount = Math.round(subtotal * (Number(row.value) / 100) * 100) / 100;
-        if (row.max_discount) amount = Math.min(amount, Number(row.max_discount));
-      } else if (row.type === "fixed") {
-        amount = Math.min(Number(row.value), subtotal);
-      }
-      return NextResponse.json({ ok: true, type: row.type, amount });
+      return NextResponse.json((res.rows[0] as { r: unknown }).r);
     }
 
     return NextResponse.json({ ok: false, error: "Unknown action" }, { status: 400 });
@@ -75,4 +62,8 @@ export async function POST(req: Request) {
     const key = Object.keys(map).find((k) => raw.includes(k));
     return NextResponse.json({ ok: false, error: key ? map[key] : "Request failed" }, { status: 400 });
   }
+}
+
+export async function POST(req: Request) {
+  try { return await handlePost(req); } catch { return databaseServiceErrorResponse(); }
 }

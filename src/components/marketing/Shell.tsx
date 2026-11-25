@@ -7,12 +7,12 @@ import { RevealScript } from "@/components/Reveal";
 
 export function MarketingShell({ authed, children }: { authed: boolean; children: ReactNode }) {
   return (
-    <>
+    <div className="marketing-workspace">
       <SiteHeader authed={authed} />
       <main>{children}</main>
       <SiteFooter />
       <RevealScript />
-    </>
+    </div>
   );
 }
 

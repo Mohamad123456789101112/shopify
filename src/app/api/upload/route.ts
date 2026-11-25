@@ -1,4 +1,4 @@
-import { isDatabaseConfigured, databaseUnavailableResponse } from "@/db";
+import { isDatabaseConfigured, databaseUnavailableResponse, databaseServiceErrorResponse } from "@/db";
 import { NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { rls, logSecurity } from "@/db/rls";
@@ -6,7 +6,7 @@ import { getSessionUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
-const LIMITS: Record<string, number> = { logo: 2 * 1024 * 1024, favicon: 1024 * 1024, product: 5 * 1024 * 1024, receipt: 5 * 1024 * 1024 };
+const LIMITS: Record<string, number> = { logo: 2 * 1024 * 1024, favicon: 1024 * 1024, product: 4 * 1024 * 1024, receipt: 4 * 1024 * 1024 };
 
 /** Magic-byte sniffing — the declared MIME type is never trusted, SVG is always rejected. */
 function sniff(buf: Uint8Array): string | null {
@@ -21,7 +21,7 @@ function sniff(buf: Uint8Array): string | null {
   return null;
 }
 
-export async function POST(req: Request) {
+async function handlePost(req: Request) {
   if (!isDatabaseConfigured()) return databaseUnavailableResponse();
   const user = await getSessionUser();
   if (!user?.merchant) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -52,4 +52,8 @@ export async function POST(req: Request) {
   });
 
   return NextResponse.json({ ok: true, url: `/api/media/${id}`, mime, bytes: bytes.length });
+}
+
+export async function POST(req: Request) {
+  try { return await handlePost(req); } catch { return databaseServiceErrorResponse(); }
 }

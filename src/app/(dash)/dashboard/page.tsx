@@ -5,10 +5,12 @@ import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
-export default async function DashboardPage() {
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ days?: string }> }) {
+  const query = await searchParams;
+  const days = query.days === "7" ? 7 : query.days === "90" ? 90 : 30;
   const user = await getSessionUser();
   if (!user?.merchant) redirect("/login");
-  const [data, store] = await Promise.all([dashboardData(user.id), getStore(user.id)]);
+  const [data, store] = await Promise.all([dashboardData(user.id, days), getStore(user.id)]);
   const currency = (store.settings as { currency?: string }).currency ?? "EGP";
 
   return (
@@ -25,6 +27,8 @@ export default async function DashboardPage() {
       recent={data.recent}
       productCount={data.productCount}
       currency={currency}
+      days={days}
+      publishedAt={store.published_at ? String(store.published_at) : null}
     />
   );
 }

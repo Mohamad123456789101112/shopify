@@ -21,13 +21,18 @@ const globalForDb = globalThis as typeof globalThis & {
 export function getPool(): Pool {
   const connectionString = process.env.DATABASE_URL?.trim();
   if (!connectionString) throw new Error("DATABASE_NOT_CONFIGURED");
-  return (globalForDb.__arenaNextJsPostgresqlPool ??= new Pool({
-    connectionString,
-    connectionTimeoutMillis: 5000,
-    max: 5,
-  }));
+  if (!globalForDb.__arenaNextJsPostgresqlPool) {
+    const pool = new Pool({ connectionString, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000, max: 5 });
+    pool.on("error", () => { console.error("An idle database connection was interrupted."); });
+    globalForDb.__arenaNextJsPostgresqlPool = pool;
+  }
+  return globalForDb.__arenaNextJsPostgresqlPool;
 }
 
 export function getDb() {
   return drizzle(getPool());
+}
+
+export function databaseServiceErrorResponse() {
+  return Response.json({ ok: false, code: "SERVICE_UNAVAILABLE", error: "The service is temporarily unavailable. Please try again shortly." }, { status: 503, headers: { "Cache-Control": "no-store" } });
 }

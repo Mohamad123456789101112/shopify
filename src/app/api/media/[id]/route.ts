@@ -1,4 +1,4 @@
-import { isDatabaseConfigured, databaseUnavailableResponse } from "@/db";
+import { isDatabaseConfigured, databaseUnavailableResponse, databaseServiceErrorResponse } from "@/db";
 import { sql } from "drizzle-orm";
 import { rls } from "@/db/rls";
 import { getSessionUser } from "@/lib/auth";
@@ -6,7 +6,7 @@ import { getSessionUser } from "@/lib/auth";
 export const dynamic = "force-dynamic";
 
 /** Private bucket read: RLS decides (own media, platform owner, or published/public copies). */
-export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+async function handleGet(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   if (!isDatabaseConfigured()) return databaseUnavailableResponse();
   const { id } = await ctx.params;
   if (!/^[0-9a-f-]{36}$/i.test(id)) return new Response("Not found", { status: 404 });
@@ -25,4 +25,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       "Content-Length": String(buf.length),
     },
   });
+}
+
+export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  try { return await handleGet(req, ctx); } catch { return databaseServiceErrorResponse(); }
 }

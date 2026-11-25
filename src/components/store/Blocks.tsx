@@ -493,8 +493,8 @@ export function BlockView({ block, ctx }: { block: Block; ctx: StoreCtx }) {
       const showStars = Boolean(P(b, "stars", true));
       const showAvatars = Boolean(P(b, "avatars", true));
       const cardKind = asStr(P(b, "card", "card"));
-      const Card = ({ it }: { it: { quote: string; name: string; meta: string; rating: number; avatar: string } }) => (
-        <div style={{ width: layout === "marquee" ? 320 : undefined, marginInlineEnd: layout === "marquee" ? 16 : 0, padding: cardKind === "flat" ? 0 : 20, background: cardKind === "card" ? v.surface : "transparent", border: cardKind === "quote" ? `1px solid ${v.line}` : undefined, borderRadius: cardKind === "flat" ? 0 : 16 }}>
+      const renderCard = (it: { quote: string; name: string; meta: string; rating: number; avatar: string }, key = 0) => (
+        <div key={key} style={{ width: layout === "marquee" ? 320 : undefined, marginInlineEnd: layout === "marquee" ? 16 : 0, padding: cardKind === "flat" ? 0 : 20, background: cardKind === "card" ? v.surface : "transparent", border: cardKind === "quote" ? `1px solid ${v.line}` : undefined, borderRadius: cardKind === "flat" ? 0 : 16 }}>
           {showStars && (
             <div style={{ display: "flex", gap: 2, color: v.accent, marginBottom: 8 }}>
               {Array.from({ length: Math.max(1, Math.min(5, Number(it.rating) || 5)) }).map((_, i) => <Star key={i} size={12} fill="currentColor" />)}
@@ -518,12 +518,12 @@ export function BlockView({ block, ctx }: { block: Block; ctx: StoreCtx }) {
         <Section block={b} ctx={ctx}>
           <Title text={asStr(P(b, "title"))} sub={asStr(P(b, "subtitle"))} ctx={ctx} />
           {layout === "marquee" ? (
-            <Marquee speed={34}>{items.map((it, i) => <Card key={i} it={it} />)}</Marquee>
+            <Marquee speed={34}>{items.map((it, i) => renderCard(it, i))}</Marquee>
           ) : layout === "single" ? (
-            <div style={{ maxWidth: 560, margin: "0 auto", textAlign: "center" }}>{items[0] && <Card it={items[0]} />}</div>
+            <div style={{ maxWidth: 560, margin: "0 auto", textAlign: "center" }}>{items[0] && renderCard(items[0])}</div>
           ) : (
             <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(240px,1fr))" }}>
-              {items.map((it, i) => <Card key={i} it={it} />)}
+              {items.map((it, i) => renderCard(it, i))}
             </div>
           )}
         </Section>
@@ -644,7 +644,8 @@ function Accordion({ q, a, v }: { q: string; a: string; v: SiteDoc["vars"] }) {
 }
 
 function Countdown({ target, ctx }: { target: string; ctx: StoreCtx }) {
-  const end = useMemo(() => (target ? new Date(target).getTime() : Date.now() + 86400000 * 2), [target]);
+  const [fallbackEnd] = useState(() => Date.now() + 86400000 * 2);
+  const end = useMemo(() => (target ? new Date(target).getTime() : fallbackEnd), [target, fallbackEnd]);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);

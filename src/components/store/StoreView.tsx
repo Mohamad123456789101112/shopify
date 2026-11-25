@@ -33,10 +33,13 @@ export function StoreView(props: {
 
   useEffect(() => {
     if (preview) return;
+    const frame = requestAnimationFrame(() => {
     try {
       const raw = localStorage.getItem(`bly_cart_${slug}`);
       if (raw) setCart(JSON.parse(raw) as CartLine[]);
     } catch { /* ignore */ }
+    });
+    return () => cancelAnimationFrame(frame);
   }, [slug, preview]);
 
   const persist = useCallback((next: CartLine[]) => {

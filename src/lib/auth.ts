@@ -146,14 +146,16 @@ export async function clientIp() {
 export async function createSession(userId: string) {
   const token = randomBytes(32).toString("base64url");
   const h = await headers();
+  const jar = await cookies();
+  const oldToken = jar.get(SESSION_COOKIE)?.value;
   await privileged(async (tx) => {
+    if (oldToken) await tx.execute(sql`delete from sessions where token_hash = ${sha(oldToken)}`);
     await tx.execute(sql`
       insert into sessions(token_hash, user_id, expires_at, ip, ua)
       values (${sha(token)}, ${userId}, now() + interval '${sql.raw(String(SESSION_DAYS))} days',
         ${await clientIp()}, ${(h.get("user-agent") ?? "").slice(0, 200)})`);
     await tx.execute(sql`update auth_users set last_sign_in_at = now() where id = ${userId}`);
   });
-  const jar = await cookies();
   jar.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
@@ -213,6 +215,7 @@ export async function signIn(email: string, password: string) {
   });
   const generic = { error: "Invalid email or password." as const };
   if (!rows[0]) {
+    await scrypt(password, "bly-nonexistent-account", 64);
     await logSecurity("login.failed", { email: email.slice(0, 80), ip });
     return generic;
   }
@@ -221,6 +224,7 @@ export async function signIn(email: string, password: string) {
     await logSecurity("login.failed", { email: email.slice(0, 80), ip }, rows[0].id);
     return generic;
   }
+  await privileged(async (tx) => { await tx.execute(sql`delete from rate_limits where key = ${`login:${ip}`}`); });
   await createSession(rows[0].id);
   await logSecurity("login.success", { ip }, rows[0].id);
   return { id: rows[0].id };

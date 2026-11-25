@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import { Download, Loader2, Pencil, Plus, Trash2, Upload, X } from "lucide-react";
 import { money } from "@/lib/constants";
 import { PageTitle } from "./Shell";
+import { merchantRequest } from "@/lib/api-client";
 
 export type ProductRow = {
   id: string; name: string; description: string | null; price: string; compare_at: string | null;
@@ -29,11 +30,7 @@ export function Products({ rows, plan, limit, currency, canCsv }: { rows: Produc
   async function save() {
     if (!form) return;
     setBusy(true); setError("");
-    const res = await fetch("/api/merchant", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "product.save", data: { ...form, price: Number(form.price) || 0, compareAt: form.compareAt === "" ? null : Number(form.compareAt), stock: Number(form.stock) || 0 } }),
-    });
-    const data = (await res.json()) as { ok: boolean; error?: string };
+    const data = await merchantRequest("product.save", { ...form, price: Number(form.price) || 0, compareAt: form.compareAt === "" ? null : Number(form.compareAt), stock: Number(form.stock) || 0 });
     setBusy(false);
     if (!data.ok) { setError(data.error ?? "Failed"); return; }
     setForm(null);
@@ -41,7 +38,9 @@ export function Products({ rows, plan, limit, currency, canCsv }: { rows: Produc
   }
 
   async function remove(id: string) {
-    await fetch("/api/merchant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "product.delete", data: { id } }) });
+    if (!confirm("Delete this product? This cannot be undone.")) return;
+    const result = await merchantRequest("product.delete", { id });
+    if (!result.ok) { setError(result.error ?? "Could not delete product."); return; }
     router.refresh();
   }
 
@@ -86,9 +85,10 @@ export function Products({ rows, plan, limit, currency, canCsv }: { rows: Produc
         </div>
       )}
 
+      {error && !form && <div role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-xs text-red-800">{error}</div>}
       <div className="card overflow-hidden">
         <div className="flex items-center justify-between gap-3 border-b p-3" style={{ borderColor: "var(--border)" }}>
-          <input className="input max-w-[260px]" placeholder="Search products…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <input className="input max-w-[260px]" aria-label="Search products" placeholder="Search products…" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-[12.5px]">
@@ -117,12 +117,12 @@ export function Products({ rows, plan, limit, currency, canCsv }: { rows: Produc
                   <td><span className="pill bg-[var(--panel2)] capitalize">{r.status}</span></td>
                   <td>{r.sold}</td>
                   <td className="pe-3 text-end">
-                    <button className="btn btn-ghost !px-2 !py-1.5" onClick={() => setForm({
+                    <button aria-label={`Edit ${r.name}`} className="btn btn-ghost !px-2 !py-1.5" onClick={() => setForm({
                       id: r.id, name: r.name, description: r.description ?? "", price: r.price, compareAt: r.compare_at ?? "",
                       stock: String(r.stock), image: r.image ?? "", category: r.category ?? "", collection: r.collection ?? "",
                       colors: r.colors ?? [], sizes: r.sizes ?? [], badge: r.badge ?? "", status: r.status,
                     })}><Pencil size={13} /></button>
-                    <button className="btn btn-ghost !px-2 !py-1.5 ms-1 text-red-500" onClick={() => remove(r.id)}><Trash2 size={13} /></button>
+                    <button aria-label={`Delete ${r.name}`} className="btn btn-ghost !px-2 !py-1.5 ms-1 text-red-500" onClick={() => remove(r.id)}><Trash2 size={13} /></button>
                   </td>
                 </tr>
               ))}

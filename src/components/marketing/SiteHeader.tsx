@@ -30,7 +30,7 @@ export function SiteHeader({ authed = false }: { authed?: boolean }) {
               key={l.href}
               href={l.href}
               className={`text-[13.5px] font-medium transition hover:opacity-100 ${
-                path === l.href ? "opacity-100 underline decoration-[#e0704a] decoration-2 underline-offset-8" : "opacity-70"
+                path === l.href ? "opacity-100 underline decoration-[#008060] decoration-2 underline-offset-8" : "opacity-70"
               }`}
             >
               {t(l.key)}

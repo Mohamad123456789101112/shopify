@@ -17,7 +17,7 @@ end $$;
 grant usage on schema public to app_client;
 grant select, insert, update, delete on all tables in schema public to app_client;
 grant usage, select on all sequences in schema public to app_client;
-revoke all on auth_users, sessions, audit_logs, security_logs, rate_limits, platform_settings from app_client;
+revoke all on auth_users, sessions, password_resets, bly_schema_migrations, audit_logs, security_logs, rate_limits, platform_settings from app_client;
 grant select on platform_settings to app_client;
 grant select on audit_logs, security_logs to app_client;
 revoke insert, update, delete on orders from app_client;
@@ -88,7 +88,7 @@ declare t text;
 begin
   foreach t in array array['profiles','merchants','stores','products','orders','discounts','campaigns',
     'notifications','plan_payments','platform_owners','platform_settings','audit_logs','security_logs',
-    'auth_users','sessions','rate_limits']
+    'auth_users','sessions','rate_limits','password_resets','bly_schema_migrations']
   loop
     execute format('alter table %I enable row level security', t);
     execute format('alter table %I force row level security', t);
@@ -219,14 +219,16 @@ create or replace view public_stores as
       'codFee', coalesce(s.settings->'codFee','0'::jsonb),
       'payments', coalesce(s.settings->'paymentsPublic','{}'::jsonb)
     ) as settings
-  from merchants m join stores s on s.merchant_id = m.id;
+  from merchants m join stores s on s.merchant_id = m.id
+  where m.onboarded and s.site_published is not null;
 grant select on public_stores to app_client;
 
 create or replace view public_products as
   select p.id, m.store_slug as slug, p.name, p.description, p.price, p.compare_at, p.stock, p.image,
          p.category, p.collection, p.colors, p.sizes, p.badge, p.sold, p.created_at
   from products p join merchants m on m.id = p.merchant_id
-  where p.status = 'active' and not m.suspended;
+  where p.status = 'active' and not m.suspended and m.onboarded
+    and exists (select 1 from stores s where s.merchant_id = m.id and s.site_published is not null);
 grant select on public_products to app_client;
 
 create or replace view public_platform_settings as
@@ -238,11 +240,8 @@ create or replace function rl_hit(p_key text, p_limit int, p_window int, p_block
 returns boolean language plpgsql security definer set search_path = public as $$
 declare r rate_limits%rowtype;
 begin
+  insert into rate_limits(key, hits, window_start) values (p_key, 0, now()) on conflict (key) do nothing;
   select * into r from rate_limits where key = p_key for update;
-  if not found then
-    insert into rate_limits(key, hits, window_start) values (p_key, 1, now());
-    return true;
-  end if;
   if r.blocked_until is not null and r.blocked_until > now() then return false; end if;
   if r.window_start < now() - make_interval(secs => p_window) then
     update rate_limits set hits = 1, window_start = now(), blocked_until = null where key = p_key;
@@ -277,10 +276,13 @@ begin
   if not found then raise exception 'store_not_found'; end if;
   if m.suspended then raise exception 'store_suspended'; end if;
   select * into st from stores where merchant_id = m.id;
+  if not m.onboarded or st.site_published is null then raise exception 'store_not_found'; end if;
 
-  if p_payment not in ('cod','wallet','instapay') then raise exception 'payment_not_supported'; end if;
+  if p_payment not in ('cod','wallet','instapay') or not coalesce((st.settings->'paymentsPublic'->>p_payment)::boolean, p_payment = 'cod') then
+    raise exception 'payment_not_supported';
+  end if;
   if jsonb_typeof(p_items) <> 'array' or jsonb_array_length(p_items) = 0 then raise exception 'empty_cart'; end if;
-  if coalesce(p_customer->>'name','') = '' or coalesce(p_customer->>'phone','') = '' then raise exception 'missing_customer'; end if;
+  if coalesce(p_customer->>'name','') = '' or char_length(regexp_replace(coalesce(p_customer->>'phone',''), '[^0-9]', '', 'g')) not between 8 and 20 then raise exception 'missing_customer'; end if;
 
   for it in select * from jsonb_array_elements(p_items) loop
     select * into p from products
@@ -305,10 +307,14 @@ begin
   if p_payment = 'cod' then ship := ship + codfee; end if;
 
   if coalesce(p_code,'') <> '' then
-    select * into d from discounts where merchant_id = m.id and code = upper(p_code) and active
-      and (starts_at is null or starts_at <= now()) and (expires_at is null or expires_at > now())
-      and (max_uses is null or uses < max_uses) and min_order <= subtotal for update;
+    select * into d from discounts dc where dc.merchant_id = m.id and dc.code = upper(p_code) and dc.active
+      and (dc.starts_at is null or dc.starts_at <= now()) and (dc.expires_at is null or dc.expires_at > now())
+      and (dc.max_uses is null or dc.uses < dc.max_uses) and dc.min_order <= subtotal for update;
     if found then
+      if d.once_per_customer and exists (select 1 from orders where merchant_id = m.id
+        and regexp_replace(customer->>'phone', '[^0-9]', '', 'g') = regexp_replace(p_customer->>'phone', '[^0-9]', '', 'g') and history @> jsonb_build_array(jsonb_build_object('discount', d.code))) then
+        raise exception 'discount_already_used';
+      end if;
       if d.type = 'percent' then
         disc := round(subtotal * d.value / 100.0, 2);
         if d.max_discount is not null then disc := least(disc, d.max_discount); end if;
@@ -333,7 +339,7 @@ begin
       'address', left(coalesce(p_customer->>'address',''), 200)),
     items_out, subtotal, disc, ship, total, 'New', p_payment, pay_status,
     left(nullif(p_ref,''), 64), left(nullif(p_receipt,''), 500), left(coalesce(p_note,''), 500),
-    jsonb_build_array(jsonb_build_object('at', now(), 'label', 'Order placed')))
+    jsonb_build_array(jsonb_build_object('at', now(), 'label', 'Order placed', 'discount', upper(coalesce(p_code, '')))))
   returning id into oid;
 
   insert into notifications(merchant_id, kind, title, text)
@@ -343,6 +349,27 @@ begin
 end $$;
 revoke all on function place_order(text,jsonb,jsonb,text,text,text,text,text,text) from public;
 grant execute on function place_order(text,jsonb,jsonb,text,text,text,text,text,text) to app_client;
+
+-- Safe anonymous discount preview: never expose merchant/customer tables.
+create or replace function check_discount(p_slug text, p_code text, p_subtotal numeric)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare d record; amount numeric := 0;
+begin
+  select dc.* into d from discounts dc join merchants m on m.id = dc.merchant_id
+    join stores st on st.merchant_id = m.id
+    where m.store_slug = p_slug and not m.suspended and m.onboarded and st.site_published is not null
+      and dc.code = upper(p_code) and dc.active and dc.min_order <= greatest(p_subtotal, 0)
+      and (dc.starts_at is null or dc.starts_at <= now()) and (dc.expires_at is null or dc.expires_at > now())
+      and (dc.max_uses is null or dc.uses < dc.max_uses) limit 1;
+  if not found then return jsonb_build_object('ok', false, 'error', 'Code not valid for this order.'); end if;
+  if d.type = 'percent' then
+    amount := round(greatest(p_subtotal, 0) * least(d.value, 100) / 100, 2);
+    if d.max_discount is not null then amount := least(amount, d.max_discount); end if;
+  elsif d.type = 'fixed' then amount := least(d.value, greatest(p_subtotal, 0)); end if;
+  return jsonb_build_object('ok', true, 'type', d.type, 'amount', amount);
+end $$;
+revoke all on function check_discount(text,text,numeric) from public;
+grant execute on function check_discount(text,text,numeric) to app_client;
 
 -- ── RPC 2: track_order (code + last-6 phone digits, minimal projection) ──
 create or replace function track_order(p_slug text, p_code text, p_phone text, p_ip text default 'unknown')
@@ -451,9 +478,25 @@ grant select, insert, update, delete on media to app_client;
 
 -- ── seed platform settings ──
 insert into platform_settings(id, data) values (1, jsonb_build_object(
-  'walletNumber', '01000000000', 'instapayHandle', 'brandly@instapay', 'graceDays', 5,
+  'walletNumber', '', 'instapayHandle', '', 'graceDays', 5,
   'prices', jsonb_build_object('growth', jsonb_build_object('monthly', 299, 'yearly', 2870),
                                'pro', jsonb_build_object('monthly', 599, 'yearly', 5750)),
   'public', jsonb_build_object('brand', 'BLY', 'supportEmail', 'support@brandly.store')))
 on conflict (id) do nothing;
+
+revoke all on function subscription_sweep() from public;
+revoke all on function rl_hit(text,integer,integer,integer) from public;
+-- Supabase may install default REST grants: these tables are accessed only by this server.
+do $$ declare r text; t text; begin
+  foreach r in array array['anon', 'authenticated'] loop
+    if exists (select 1 from pg_roles where rolname = r) then
+      foreach t in array array['auth_users','sessions','password_resets','bly_schema_migrations',
+        'profiles','merchants','stores','products','orders','discounts','campaigns','notifications',
+        'plan_payments','platform_owners','platform_settings','audit_logs','security_logs','media','rate_limits',
+        'public_stores','public_products','public_platform_settings'] loop
+        execute format('revoke all on %I from %I', t, r);
+      end loop;
+    end if;
+  end loop;
+end $$;
 `;

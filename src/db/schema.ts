@@ -264,3 +264,11 @@ export const rateLimits = pgTable("rate_limits", {
   windowStart: timestamp("window_start", { withTimezone: true }).notNull().defaultNow(),
   blockedUntil: timestamp("blocked_until", { withTimezone: true }),
 });
+
+/** Single-use, hashed password reset tokens; never readable by app_client. */
+export const passwordResets = pgTable("password_resets", {
+  tokenHash: text("token_hash").primaryKey(),
+  userId: uuid("user_id").notNull().references(() => authUsers.id, { onDelete: "cascade" }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});

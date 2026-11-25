@@ -1,75 +1,76 @@
 import { isDatabaseConfigured, databaseUnavailableResponse } from "@/db";
 import { NextResponse } from "next/server";
 import {
-  clientIp, destroySession, getSessionUser, signIn, signUpMerchant, validEmail, validatePassword,
+  clientIp, createSession, destroySession, getSessionUser, signIn, signUpMerchant, validEmail, validatePassword,
 } from "@/lib/auth";
 import { logSecurity, rateLimit } from "@/db/rls";
+import { isResetEmailConfigured, requestPasswordReset, resetPassword } from "@/lib/password-reset";
 
 export const dynamic = "force-dynamic";
-
 type Body = Record<string, unknown>;
 const str = (b: Body, k: string, max = 200) => (typeof b[k] === "string" ? (b[k] as string).trim().slice(0, max) : "");
+const json = (body: Record<string, unknown>, status = 200) => NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
 
 export async function POST(req: Request, ctx: { params: Promise<{ action: string }> }) {
+  const origin = req.headers.get("origin");
+  if (origin && origin !== new URL(req.url).origin) return json({ ok: false, error: "Request origin is not allowed." }, 403);
   const { action } = await ctx.params;
-  let body: Body = {};
+  if (!["signup", "login", "logout", "reset", "reset-password"].includes(action)) return json({ ok: false, error: "Unknown action" }, 404);
   try {
-    body = (await req.json()) as Body;
-  } catch {
-    body = {};
-  }
-
-  if (action === "logout") {
-    await destroySession();
-    return NextResponse.json({ ok: true });
-  }
-
-  if (!isDatabaseConfigured()) return databaseUnavailableResponse();
-
-  if (action === "signup") {
-    const ip = await clientIp();
-    if (!(await rateLimit(`signup:${ip}`, 6, 900, 900))) {
-      return NextResponse.json({ ok: false, error: "Too many attempts. Try again later." }, { status: 429 });
+    if (action === "logout") {
+      await destroySession();
+      return json({ ok: true });
     }
-    const email = str(body, "email", 200).toLowerCase();
-    const password = typeof body.password === "string" ? (body.password as string) : "";
-    const name = str(body, "name", 60);
-    const storeName = str(body, "storeName", 40) || name;
-    if (!validEmail(email)) return NextResponse.json({ ok: false, error: "Enter a valid email address." }, { status: 400 });
-    if (name.length < 2) return NextResponse.json({ ok: false, error: "Name must be at least 2 characters." }, { status: 400 });
-    if (storeName.length < 2) return NextResponse.json({ ok: false, error: "Store name must be at least 2 characters." }, { status: 400 });
-    const pwErr = validatePassword(password);
-    if (pwErr) return NextResponse.json({ ok: false, error: pwErr }, { status: 400 });
+    if (!isDatabaseConfigured()) return databaseUnavailableResponse();
+    const input: unknown = await req.json().catch(() => null);
+    if (!input || typeof input !== "object" || Array.isArray(input)) return json({ ok: false, error: "Invalid request body." }, 400);
+    const body = input as Body;
+    const email = str(body, "email").toLowerCase();
+    const password = typeof body.password === "string" ? body.password : "";
 
-    const { id } = await signUpMerchant(email, password, name, storeName);
-    if (!id) {
-      await logSecurity("signup.duplicate", { email: email.slice(0, 80), ip });
-      return NextResponse.json({ ok: false, error: "Could not create this account. Try logging in instead." }, { status: 400 });
+    if (action === "signup") {
+      const name = str(body, "name", 60);
+      const storeName = str(body, "storeName", 40) || name;
+      if (!validEmail(email)) return json({ ok: false, error: "Enter a valid email address." }, 400);
+      if (name.length < 2 || storeName.length < 2) return json({ ok: false, error: "Your name and store name must be at least 2 characters." }, 400);
+      const error = validatePassword(password);
+      if (error) return json({ ok: false, error }, 400);
+      const ip = await clientIp();
+      if (!(await rateLimit(`signup:${ip}`, 6, 900, 900))) return json({ ok: false, error: "Too many attempts. Try again later." }, 429);
+      const { id } = await signUpMerchant(email, password, name, storeName);
+      if (!id) return json({ ok: false, error: "Could not create this account. Try logging in instead." }, 400);
+      await createSession(id);
+      await logSecurity("signup.success", { ip }, id);
+      return json({ ok: true, redirect: "/setup" });
     }
-    const res = await signIn(email, password);
-    if ("error" in res) return NextResponse.json({ ok: true, redirect: "/login" });
-    await logSecurity("signup.success", { ip }, id);
-    return NextResponse.json({ ok: true, redirect: "/setup" });
-  }
 
-  if (action === "login") {
-    const email = str(body, "email", 200).toLowerCase();
-    const password = typeof body.password === "string" ? (body.password as string) : "";
-    if (!email || !password) return NextResponse.json({ ok: false, error: "Invalid email or password." }, { status: 400 });
-    const res = await signIn(email, password);
-    if ("error" in res) return NextResponse.json({ ok: false, error: res.error }, { status: 400 });
-    const user = await getSessionUser();
-    const redirect = user?.isOwner ? "/admin" : user?.merchant?.onboarded ? "/dashboard" : "/setup";
-    return NextResponse.json({ ok: true, redirect });
-  }
+    if (action === "login") {
+      if (!validEmail(email) || !password || password.length > 128) return json({ ok: false, error: "Invalid email or password." }, 400);
+      const res = await signIn(email, password);
+      if ("error" in res) return json({ ok: false, error: res.error }, 400);
+      const user = await getSessionUser();
+      return json({ ok: true, redirect: user?.isOwner ? "/admin" : user?.merchant?.onboarded ? "/dashboard" : "/setup" });
+    }
 
-  if (action === "reset") {
-    // Never reveals whether the account exists.
+    if (action === "reset") {
+      if (!isResetEmailConfigured()) return json({ ok: false, error: "Password reset email is not configured. Contact the site administrator." }, 503);
+      if (!validEmail(email)) return json({ ok: false, error: "Enter a valid email address." }, 400);
+      const ip = await clientIp();
+      if (!(await rateLimit(`reset:${ip}`, 6, 900, 900))) return json({ ok: false, error: "Too many attempts. Try again later." }, 429);
+      await requestPasswordReset(email);
+      return json({ ok: true, message: "If an account exists for that email, you will receive a reset link shortly." });
+    }
+
+    const error = validatePassword(password);
+    if (error) return json({ ok: false, error }, 400);
     const ip = await clientIp();
-    await rateLimit(`reset:${ip}`, 6, 900, 900);
-    await logSecurity("password.reset_requested", { email: str(body, "email", 80), ip });
-    return NextResponse.json({ ok: true, message: "If an account exists for that email, a reset link is on its way." });
+    if (!(await rateLimit(`reset-redeem:${ip}`, 10, 900, 900))) return json({ ok: false, error: "Too many attempts. Try again later." }, 429);
+    if (!(await resetPassword(str(body, "token", 100), password))) return json({ ok: false, error: "This reset link is invalid or expired. Request a new link." }, 400);
+    return json({ ok: true, message: "Password updated. Please sign in again.", redirect: "/login" });
+  } catch (err) {
+    const code = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code;
+    if (code === "23505") return json({ ok: false, error: "Could not create this account. Try a different store name or sign in." }, 409);
+    // Never return SQL, connection strings, password hashes or provider responses.
+    return json({ ok: false, error: "The service is temporarily unavailable. Please try again shortly.", code: "SERVICE_UNAVAILABLE" }, 503);
   }
-
-  return NextResponse.json({ ok: false, error: "Unknown action" }, { status: 404 });
 }

@@ -53,7 +53,7 @@ export function HomeSections() {
         <div className="mx-auto grid max-w-[1200px] items-center gap-12 px-5 py-14 lg:grid-cols-[1.05fr_1fr] lg:py-20">
           <div>
             <div className="inline-flex items-center gap-2 rounded-full border bg-[var(--panel)] px-3 py-1.5" style={{ borderColor: "var(--border)" }}>
-              <Sparkles size={13} className="text-[#e0704a]" />
+              <Sparkles size={13} className="text-[#008060]" />
               <span className="text-[11.5px] font-semibold">{t("hero.badge")}</span>
               <span className="text-[11px] text-[var(--dim)]">{t("hero.badge2")}</span>
             </div>
@@ -65,7 +65,7 @@ export function HomeSections() {
             <p className="mt-5 max-w-[520px] text-[15px] leading-relaxed text-[var(--dim)]">{t("hero.sub")}</p>
             <div className="mt-7 flex flex-wrap gap-3">
               <Link href="/signup" className="btn btn-primary !px-6 !py-3">{t("cta.start")} <ArrowRight size={16} /></Link>
-              <Link href="/templates" className="btn btn-ghost !px-6 !py-3"><Play size={15} /> {t("cta.demo")}</Link>
+              <Link href="/demo" className="btn btn-ghost !px-6 !py-3"><Play size={15} /> {t("cta.demo")}</Link>
             </div>
             <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-4">
               {[["hero.f1", Package], ["hero.f2", Smartphone], ["hero.f3", Shield], ["hero.f4", BarChart3]].map(([k, I]) => {
@@ -180,7 +180,7 @@ export function HomeSections() {
             <div className="flex items-center gap-2 rounded-full border bg-[var(--panel)] p-1" style={{ borderColor: "var(--border)" }}>
               <button onClick={() => setYearly(false)} className={`btn !py-1.5 !text-[12px] ${!yearly ? "btn-primary" : ""}`}>{t("price.monthly")}</button>
               <button onClick={() => setYearly(true)} className={`btn !py-1.5 !text-[12px] ${yearly ? "btn-primary" : ""}`}>{t("price.yearly")}</button>
-              <span className="pill bg-[#e0704a]/10 text-[#e0704a]">{t("price.save")}</span>
+              <span className="pill bg-[#008060]/10 text-[#008060]">{t("price.save")}</span>
             </div>
           </div>
           <div className="mt-8 grid gap-4 md:grid-cols-3">
@@ -195,7 +195,7 @@ export function HomeSections() {
                 </div>
                 <ul className="mt-4 space-y-2">
                   {p.items.map((i) => (
-                    <li key={i} className="flex items-center gap-2 text-[12.5px]"><Check size={14} className="text-[#e0704a]" /> {i}</li>
+                    <li key={i} className="flex items-center gap-2 text-[12.5px]"><Check size={14} className="text-[#008060]" /> {i}</li>
                   ))}
                 </ul>
                 <Link href="/signup" className={`btn mt-6 w-full ${p.popular ? "btn-primary" : "btn-ghost"}`}>Get Started</Link>
@@ -231,7 +231,7 @@ export function HomeSections() {
                       <div className="text-[12px] font-bold">{x.n}</div>
                       <div className="text-[10.5px] text-[var(--dim)]">{x.m}</div>
                     </div>
-                    <div className="flex">{Array.from({ length: 5 }).map((_, i) => <Star key={i} size={11} className="fill-[#e0704a] text-[#e0704a]" />)}</div>
+                    <div className="flex">{Array.from({ length: 5 }).map((_, i) => <Star key={i} size={11} className="fill-[#008060] text-[#008060]" />)}</div>
                   </div>
                 </div>
               ))}

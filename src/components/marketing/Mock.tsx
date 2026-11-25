@@ -20,7 +20,7 @@ export function HeroMock() {
           <span className="pill bg-emerald-50 text-emerald-600">+19%</span>
         </div>
         <svg viewBox="0 0 120 34" className="mt-2 w-full">
-          <polyline points="0,28 16,24 32,26 48,18 64,20 80,12 96,14 120,4" fill="none" stroke="#e0704a" strokeWidth="2" />
+          <polyline points="0,28 16,24 32,26 48,18 64,20 80,12 96,14 120,4" fill="none" stroke="#008060" strokeWidth="2" />
         </svg>
       </div>
 
@@ -98,7 +98,7 @@ export function DashboardMock() {
           <div className="mt-2 rounded-xl bg-[var(--panel2)] p-3">
             <div className="flex items-center justify-between text-[9.5px] text-[var(--dim)]"><span>Sales Overview</span><span>Last 7 days</span></div>
             <svg viewBox="0 0 300 70" className="mt-1 w-full">
-              <polyline points="0,60 40,52 80,55 120,40 160,44 200,26 240,30 300,10" fill="none" stroke="#e0704a" strokeWidth="2.5" />
+              <polyline points="0,60 40,52 80,55 120,40 160,44 200,26 240,30 300,10" fill="none" stroke="#008060" strokeWidth="2.5" />
             </svg>
           </div>
         </div>

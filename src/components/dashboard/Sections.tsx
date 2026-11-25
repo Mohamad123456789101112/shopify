@@ -5,11 +5,9 @@ import { useState } from "react";
 import { Check, Copy, Loader2, Plus, Trash2, Upload } from "lucide-react";
 import { money, PLAN_PRICES } from "@/lib/constants";
 import { PageTitle, UpgradeNote } from "./Shell";
+import { merchantRequest } from "@/lib/api-client";
 
-async function post(action: string, data: Record<string, unknown> = {}) {
-  const res = await fetch("/api/merchant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, data }) });
-  return (await res.json()) as { ok: boolean; error?: string };
-}
+const post = merchantRequest;
 
 /* ── CUSTOMERS ─────────────────────────────────────────────── */
 export function Customers({ rows, currency }: { rows: { name: string; phone: string; city: string; orders: number; spent: string; last: string }[]; currency: string }) {
@@ -133,7 +131,7 @@ export function Marketing({ plan, discounts, campaigns, canDiscounts, canCampaig
       <div className="mt-4">
         {!canCampaigns ? <UpgradeNote plan={plan} need="Pro" feature="Campaigns" /> : (
           <div className="card p-5">
-            <div className="text-[13px] font-bold">Campaigns</div>
+            <div className="text-[13px] font-bold">Campaign drafts</div><p className="mt-1 text-xs text-[var(--dim)]">Plan your campaigns here. Email and WhatsApp delivery integrations are not connected yet.</p>
             <div className="mt-3 flex flex-wrap gap-2">
               <input className="input max-w-[240px]" placeholder="Campaign name" value={camp.name} onChange={(e) => setCamp({ ...camp, name: e.target.value })} />
               <select className="input max-w-[160px]" value={camp.channel} onChange={(e) => setCamp({ ...camp, channel: e.target.value })}>
@@ -171,25 +169,29 @@ export function Settings({ storeName, slug, plan, settings, payments }: {
     codFee: Number(settings.codFee ?? 0),
   });
   const [pay, setPay] = useState(payments);
+  const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
 
   async function save() {
-    setBusy(true);
-    await post("settings.save", {
+    setBusy(true); setSaved(false); setError("");
+    const result = await post("settings.save", {
       storeName: name,
       settings: { ...settings, ...s, paymentsPublic: { cod: pay.cod.enabled, wallet: pay.wallet.enabled && plan !== "free" && !!pay.wallet.number, instapay: pay.instapay.enabled && plan !== "free" && !!pay.instapay.number } },
       payments: {
-        cod: { enabled: pay.cod.enabled, fee: Number(pay.cod.fee) || 0, label: "Cash on delivery", note: "Pay the courier when it arrives" },
+        cod: { enabled: pay.cod.enabled, fee: Number(s.codFee) || 0, label: "Cash on delivery", note: "Pay the courier when it arrives" },
         wallet: { enabled: pay.wallet.enabled && plan !== "free", number: pay.wallet.number, label: "Vodafone Cash", note: "Send the total then paste the reference" },
         instapay: { enabled: pay.instapay.enabled && plan !== "free", number: pay.instapay.number, label: "InstaPay", note: "Transfer then upload the receipt" },
       },
     });
-    setBusy(false); setSaved(true); setTimeout(() => setSaved(false), 1800); router.refresh();
+    setBusy(false);
+    if (!result.ok) { setError(result.error ?? "Could not save settings."); return; }
+    setSaved(true); setTimeout(() => setSaved(false), 1800); router.refresh();
   }
 
   return (
     <>
+      {error && <div role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-xs text-red-800">{error}</div>}
       <PageTitle title="Settings" sub="Store details, payments and danger zone" action={<button className="btn btn-primary" onClick={save} disabled={busy}>{busy ? <Loader2 size={14} className="spin" /> : saved ? <Check size={14} /> : null} Save changes</button>} />
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="card p-5">
@@ -234,8 +236,8 @@ export function Settings({ storeName, slug, plan, settings, payments }: {
 
         <div className="card p-5">
           <div className="text-[13px] font-bold">Custom domain</div>
-          <p className="mt-1 text-[12px] text-[var(--dim)]">{plan === "pro" ? "Point a CNAME to stores.brandly.app and we verify it automatically." : "Custom domains are available on the Pro plan."}</p>
-          <input className="input mt-3" placeholder="shop.yourbrand.com" disabled={plan !== "pro"} />
+          <p className="mt-1 text-[12px] text-[var(--dim)]">{plan === "pro" ? "Custom domain provisioning is not connected yet. Contact the platform administrator before changing DNS." : "Custom domains are available on the Pro plan."}</p>
+          <input className="input mt-3" placeholder="Custom domain provisioning coming soon" disabled />
         </div>
 
         <div className="card border-red-200 p-5">
@@ -278,7 +280,8 @@ export function Billing({ plan, billing, expiresAt, subStatus, requests, walletN
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const days = expiresAt ? Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 86400000) : null;
+  const [now] = useState(() => Date.now());
+  const days = expiresAt ? Math.ceil((new Date(expiresAt).getTime() - now) / 86400000) : null;
   const amount = modal ? PLAN_PRICES[modal][yearly ? "yearly" : "monthly"] : 0;
 
   async function submit() {

@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { getDb, getPool } from "@/db";
-import { BOOTSTRAP_SQL } from "./sql";
+import { migrateDatabase } from "./migrate";
 
 export type Tx = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
 
@@ -9,9 +9,7 @@ let ready: Promise<void> | null = null;
 /** Idempotent security bootstrap (role, RLS, triggers, RPCs) — runs once per process. */
 export function ensureDb(): Promise<void> {
   if (!ready) {
-    ready = getPool()
-      .query(BOOTSTRAP_SQL)
-      .then(() => undefined)
+    ready = migrateDatabase(getPool())
       .catch((err) => {
         ready = null;
         throw err;

@@ -23,7 +23,7 @@ export function Logo({ href = "/", size = 28 }: { href?: string; size?: number }
       <LogoMark size={size} />
       <span className="display text-[17px] font-extrabold tracking-tight">
         <span style={{ color: "var(--fg)" }}>brand</span>
-        <span className="text-[#e0704a]">ly</span>
+        <span className="text-[#008060]">ly</span>
       </span>
     </Link>
   );

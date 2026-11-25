@@ -1,5 +1,6 @@
 import { getDb, isDatabaseConfigured } from "@/db";
 import { sql } from "drizzle-orm";
+import { ensureDb } from "@/db/rls";
 
 export const dynamic = "force-dynamic";
 
@@ -8,6 +9,7 @@ export async function GET() {
     return Response.json({ ok: true, database: "not_configured", mode: "website-only" });
   }
   try {
+    await ensureDb();
     await getDb().execute(sql`select 1`);
     return Response.json({ ok: true, database: "connected" });
   } catch {

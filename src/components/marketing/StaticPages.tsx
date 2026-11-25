@@ -165,14 +165,14 @@ function PricingTable() {
           <div key={p.name} className={`card p-6 ${i === 1 ? "shadow-soft ring-2 ring-[#111] dark:ring-white" : ""}`}>
             <div className="flex items-center justify-between">
               <span className="text-[14px] font-bold">{p.name}</span>
-              {i === 1 && <Star size={14} className="fill-[#e0704a] text-[#e0704a]" />}
+              {i === 1 && <Star size={14} className="fill-[#008060] text-[#008060]" />}
             </div>
             <div className="mt-3 flex items-end gap-1">
               <span className="display text-[30px] font-extrabold">{p.price}</span>
               <span className="mb-1.5 text-[11.5px] text-[var(--dim)]">EGP /month</span>
             </div>
             <ul className="mt-4 space-y-2">
-              {p.items.map((x) => <li key={x} className="flex items-center gap-2 text-[12.5px]"><Check size={14} className="text-[#e0704a]" /> {x}</li>)}
+              {p.items.map((x) => <li key={x} className="flex items-center gap-2 text-[12.5px]"><Check size={14} className="text-[#008060]" /> {x}</li>)}
             </ul>
             <Link href="/signup" className={`btn mt-6 w-full ${i === 1 ? "btn-primary" : "btn-ghost"}`}>Get started</Link>
           </div>
